@@ -1,0 +1,19 @@
+{
+	"name": "roost-mcp-polymarket-us",
+	"version": "0.1.0",
+	"description": "An MCP server for a person's own Polymarket US account. An official Roost server.",
+	"license": "MIT",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "bun build src/main.ts --target=bun --outfile dist/roost-mcp-polymarket-us.js",
+		"test": "bun test",
+		"typecheck": "tsc --noEmit",
+		"drift": "bun scripts/drift.ts"
+	},
+	"devDependencies": {
+		"@modelcontextprotocol/sdk": "1.32.2",
+		"@types/bun": "1.4.4",
+		"typescript": "7.0.2"
+	}
+}
