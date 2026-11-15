@@ -18,15 +18,39 @@ The money tools are on, as other tools are, and they follow each bot's access: a
 | Tool | What it does | Key |
 | --- | --- | --- |
 | `search_markets` | Search events and markets by words | No |
-| `get_market` | One market by its slug | No |
-| `get_order_book` | The order book and stats of a market | No |
-| `get_price_history` | YES and NO prices over time | No |
+| `get_market` | One market by `market_slug` | No |
+| `get_order_book` | The order book and stats of a market (`market_slug`) | No |
+| `get_price_history` | YES and NO prices over time (`market_slug`) | No |
 | `get_balances` | Cash balance and buying power | Yes |
-| `get_positions` | Positions by market slug | Yes |
+| `get_positions` | Positions, with cost basis and profit and loss | Yes |
 | `get_activities` | Trades, resolutions, deposits, withdrawals | Yes |
 | `get_open_orders` | Open orders | Yes |
 | `get_order` | One order by its ID | Yes |
 | `preview_order` | Check an order and its expected cost. Sends no order | Yes |
+
+### Names and answer size
+
+Every tool that takes a market takes `market_slug`. Get it from `search_markets`. An order ID is `order_id`, a page size is `limit`, and a page of account lists is `cursor`.
+
+`search_markets`, `get_market`, `get_positions`, `get_activities`, `get_open_orders` and `get_price_history` return a compact answer by default. A compact answer keeps the fields that a bot needs to answer and to call the next tool, and drops the repeated market objects, the rules text and the image URLs. Give `detail: "full"` for the whole answer of Polymarket US. About sizes: `search_markets` with `limit: 3` is about 2 KB (the whole answer is more than 200 KB), and `get_activities` with `limit: 5` is about 1 KB.
+
+- `search_markets` shows the first 3 markets of each event. Each event has `marketCount`. Use `markets_per_event` to see more.
+- `get_price_history` takes `interval` (default `1D`), or `start` and `end` in Unix seconds, not both. A compact answer has at most 48 points, as `{ t, yes, no }`.
+
+### Cost and profit and loss
+
+Polymarket US gives these fields, and the compact answer names them for what they mean:
+
+| Field | Meaning |
+| --- | --- |
+| `costBasisUsd` of a position | The total cost of the position as Polymarket US counts it. It includes the trading fee. It is not the price of one fill. |
+| `avgPrice` | `costBasisUsd` divided by `quantity`. This server does that one division. |
+| `realizedPnlUsd` | The vendor's `realized`: realized profit and loss. |
+| `unrealizedPnlUsd` | The vendor's `cashValue`, which its OpenAPI describes as "Unrealized PnL for the position". |
+| `price` of a trade | The fill price. |
+| `costBasisUsd` of a trade | The vendor's cost basis for that trade, fee included. |
+
+So a trade's `costBasisUsd / quantity` can be a little above its `price`. This server does not compute its own profit and loss.
 
 ### Money tools
 
@@ -96,7 +120,7 @@ The server has no runtime dependencies. `@modelcontextprotocol/sdk` is only for 
 
 ## Release
 
-1. Set `version` in `package.json` (for example `0.1.0`), then push the tag `v0.1.0`.
+1. Set `version` in `package.json` (for example `0.1.1`), then push the tag `v0.1.1`. Add a line to `CHANGELOG.md`.
 2. The Release workflow tests, builds, and publishes `roost-mcp-polymarket-us.js` and `roost-mcp-polymarket-us.js.sha256` as release assets.
 3. In the Roost repository, set the Polymarket US row of `app-catalog.json` to the new tag and the SHA-256 from the `.sha256` file. Each hub downloads the new file the next time it starts the server.
 

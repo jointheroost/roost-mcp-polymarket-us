@@ -1,6 +1,6 @@
 {
 	"name": "roost-mcp-polymarket-us",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "An MCP server for a person's own Polymarket US account. An official Roost server.",
 	"license": "MIT",
 	"private": true,

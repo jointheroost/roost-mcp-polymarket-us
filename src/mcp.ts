@@ -3,6 +3,7 @@
  * ping, tools/list, and tools/call. No dependency: the release file is this repository's own code.
  */
 import packageJson from '../package.json' with { type: 'json' };
+import type { ObjectSchema } from './check.ts';
 import { redact, ToolError } from './errors.ts';
 import { runTool, TOOLS, type ToolContext } from './tools.ts';
 
@@ -27,13 +28,21 @@ interface JsonRpcMessage {
 
 type Reply = Record<string, unknown>;
 
+/** The input schema for clients: no `hint`, which is a word of this server's own errors. Pure. */
+function publicSchema(schema: ObjectSchema): ObjectSchema {
+	const properties = Object.fromEntries(
+		Object.entries(schema.properties).map(([name, { hint: _hint, ...rest }]) => [name, rest]),
+	);
+	return { ...schema, properties };
+}
+
 /** The tool list as MCP gives it. Pure. */
 export function toolList(): Reply[] {
 	return TOOLS.map((tool) => ({
 		name: tool.name,
 		title: tool.title,
 		description: tool.description,
-		inputSchema: tool.inputSchema,
+		inputSchema: publicSchema(tool.inputSchema),
 		annotations: {
 			title: tool.title,
 			readOnlyHint: tool.readOnly,

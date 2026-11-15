@@ -59,13 +59,14 @@ test('the bundle lists 15 tools and answers reads and an order over stdio', asyn
 	});
 	try {
 		expect(client.getServerVersion()?.name).toBe('roost-mcp-polymarket-us');
+		expect(client.getServerVersion()?.version).toBe('0.1.1');
 		const { tools } = await client.listTools();
 		expect(tools.length).toBe(15);
 		expect(tools.find((tool) => tool.name === 'place_order')?.annotations?.readOnlyHint).toBe(false);
 		expect(tools.find((tool) => tool.name === 'get_positions')?.annotations?.readOnlyHint).toBe(true);
 		const positions = await client.callTool({ name: 'get_positions', arguments: {} });
 		expect(positions.isError).toBeFalsy();
-		expect(Object.keys((positions.structuredContent as { positions: object }).positions)).toEqual([MARKET_SLUG]);
+		expect((positions.structuredContent as { positions: { marketSlug: string }[] }).positions.map((item) => item.marketSlug)).toEqual([MARKET_SLUG]);
 		const placed = await client.callTool({
 			name: 'place_order',
 			arguments: { market_slug: MARKET_SLUG, intent: 'BUY_LONG', type: 'LIMIT', quantity: 1, price: '0.4' },
@@ -91,6 +92,12 @@ test('with no key the public tools work and an account tool says to add the key'
 	try {
 		const search = await client.callTool({ name: 'search_markets', arguments: { query: 'fed' } });
 		expect(search.isError).toBeFalsy();
+		const market = await client.callTool({ name: 'get_market', arguments: { market_slug: MARKET_SLUG } });
+		expect(market.isError).toBeFalsy();
+		expect((market.structuredContent as { market: { slug: string } }).market.slug).toBe(MARKET_SLUG);
+		const missing = await client.callTool({ name: 'get_price_history', arguments: { slug: MARKET_SLUG } });
+		expect(missing.isError).toBe(true);
+		expect(JSON.stringify(missing.content)).toContain('market_slug is required. Get it from search_markets.');
 		const balances = await client.callTool({ name: 'get_balances', arguments: {} });
 		expect(balances.isError).toBe(true);
 		expect(JSON.stringify(balances.content)).toContain('Add your Polymarket US key on the app page.');

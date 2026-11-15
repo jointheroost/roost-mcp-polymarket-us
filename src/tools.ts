@@ -5,6 +5,14 @@
  * Paths and bodies follow the dated OpenAPI copies in `openapi/` (read 2026-11-14) and the official
  * TypeScript SDK 0.1.1.
  */
+import {
+	compactActivities,
+	compactHistory,
+	compactMarketAnswer,
+	compactOpenOrders,
+	compactPositions,
+	compactSearch,
+} from './compact.ts';
 import { checkInput, type ObjectSchema, type PropertySchema } from './check.ts';
 import type { PolymarketUsClient } from './client.ts';
 import { ToolError } from './errors.ts';
@@ -55,12 +63,24 @@ const slug = (description: string): PropertySchema => ({
 	description,
 	maxLength: 300,
 });
-const MARKET_SLUG = slug('The market slug, from search_markets or get_market.');
+const MARKET_SLUG: PropertySchema = {
+	...slug('The slug of the market (market_slug), from search_markets.'),
+	hint: 'Get it from search_markets.',
+};
 const ORDER_ID: PropertySchema = {
 	type: 'string',
 	description: 'The order ID that Polymarket US gave the order.',
 	maxLength: 200,
+	hint: 'Get it from get_open_orders.',
 };
+const DETAIL: PropertySchema = {
+	type: 'string',
+	enum: ['compact', 'full'],
+	description:
+		'compact (the default) keeps the fields that you need to answer and to call the next tool. full gives the whole answer of Polymarket US, which can be very large.',
+};
+/** `detail: "full"` skips the compact shape. */
+const isFull = (input: Record<string, unknown>) => input.detail === 'full';
 const LIMIT: PropertySchema = {
 	type: 'integer',
 	description: 'How many items to return.',
@@ -123,6 +143,9 @@ function object(
 ): ObjectSchema {
 	return { type: 'object', properties, required, additionalProperties: false };
 }
+
+/** Minutes between two points for each fixed interval (price-history-schema.json). */
+const HISTORY_FIDELITY = { '1H': 1, '6H': 1, '1D': 5, '1W': 180, '1M': 180, ALL: 180, LIVE: 1 } as const;
 
 const path = (template: string, value: unknown) =>
 	template.replace('{}', encodeURIComponent(String(value)));
@@ -202,19 +225,26 @@ export const TOOLS: readonly ToolDef[] = [
 		name: 'search_markets',
 		title: 'Search markets',
 		description:
-			'Search Polymarket US events and markets by words. Works with no key. Gives market slugs for the other tools.',
+			'Search Polymarket US events and markets by words. Returns events, each with its first markets: slug, title, state, Yes and No prices, volume, end date. Use a market slug as market_slug in the other tools. Works with no key.',
 		inputSchema: object(
 			{
 				query: { type: 'string', description: 'The words to search for.', maxLength: 200 },
-				limit: LIMIT,
-				page: { type: 'integer', description: 'The page, from 1.', minimum: 1 },
+				limit: { ...LIMIT, description: 'How many events to return.' },
+				page: { type: 'integer', description: 'The page of events, from 1.', minimum: 1 },
+				markets_per_event: {
+					type: 'integer',
+					description: 'How many markets to show for each event. Default 3. The event says its marketCount.',
+					minimum: 1,
+					maximum: 50,
+				},
+				detail: DETAIL,
 			},
 			['query'],
 		),
 		readOnly: true,
 		money: false,
 		async run(input, { client }) {
-			return asObject(
+			const answer = asObject(
 				await client.request({
 					host: 'public',
 					method: 'GET',
@@ -226,82 +256,125 @@ export const TOOLS: readonly ToolDef[] = [
 					},
 				}),
 			);
+			return isFull(input) ? answer : compactSearch(answer, (input.markets_per_event as number | undefined) ?? 3);
 		},
 	},
 	{
 		name: 'get_market',
 		title: 'Get a market',
-		description: 'One Polymarket US market by its slug: the question, the rules, the state. Works with no key.',
-		inputSchema: object({ slug: MARKET_SLUG }, ['slug']),
+		description:
+			'One market by market_slug: question, state, Yes and No prices (USD for one contract, 0 to 1), volume, end date. detail "full" adds the rules text and the rest. Works with no key.',
+		inputSchema: object({ market_slug: MARKET_SLUG, detail: DETAIL }, ['market_slug']),
 		readOnly: true,
 		money: false,
 		async run(input, { client }) {
-			return asObject(
-				await client.request({ host: 'public', method: 'GET', path: path('/v1/market/slug/{}', input.slug) }),
+			const answer = asObject(
+				await client.request({
+					host: 'public',
+					method: 'GET',
+					path: path('/v1/market/slug/{}', input.market_slug),
+				}),
 			);
+			return isFull(input) ? answer : compactMarketAnswer(answer);
 		},
 	},
 	{
 		name: 'get_order_book',
 		title: 'Get the order book',
 		description:
-			'The order book and stats of one market: bids, offers, last price. Prices are for the YES side. Works with no key.',
-		inputSchema: object({ slug: MARKET_SLUG }, ['slug']),
+			'The order book of one market by market_slug: bids, offers, last price, and stats. Prices are for the YES side. Works with no key.',
+		inputSchema: object({ market_slug: MARKET_SLUG }, ['market_slug']),
 		readOnly: true,
 		money: false,
 		async run(input, { client }) {
 			return asObject(
-				await client.request({ host: 'public', method: 'GET', path: path('/v1/markets/{}/book', input.slug) }),
+				await client.request({
+					host: 'public',
+					method: 'GET',
+					path: path('/v1/markets/{}/book', input.market_slug),
+				}),
 			);
 		},
 	},
 	{
 		name: 'get_price_history',
 		title: 'Get price history',
-		description: 'The YES and NO prices of one market over time. Works with no key.',
+		description:
+			'Yes and No prices of one market over time, by market_slug. Give interval (default 1D), or start and end, not both. Returns up to 48 points as t (Unix seconds), yes, no. detail "full" gives every point. Works with no key.',
 		inputSchema: object(
 			{
-				slug: MARKET_SLUG,
+				market_slug: MARKET_SLUG,
 				interval: {
 					type: 'string',
 					enum: ['ALL', '1M', '1W', '1D', '6H', '1H', 'LIVE'],
-					description: 'The time span. Default 1D.',
+					description: 'The time span. Default 1D. Do not use it with start and end.',
 				},
-				fidelity: {
+				start: {
 					type: 'integer',
-					description: 'Minutes between two points. Default 60.',
-					minimum: 1,
+					description: 'Start of a custom range in Unix seconds. Use it with end, up to 24 hours.',
+					minimum: 0,
 				},
-				start: { type: 'integer', description: 'Start time in Unix seconds.', minimum: 0 },
-				end: { type: 'integer', description: 'End time in Unix seconds.', minimum: 0 },
+				end: {
+					type: 'integer',
+					description: 'End of a custom range in Unix seconds. Use it with start.',
+					minimum: 0,
+				},
+				detail: DETAIL,
 			},
-			['slug'],
+			['market_slug'],
 		),
 		readOnly: true,
 		money: false,
 		async run(input, { client }) {
-			const interval = String(input.interval ?? '1D').toUpperCase();
-			return asObject(
+			const start = input.start as number | undefined;
+			const end = input.end as number | undefined;
+			if (input.interval !== undefined && (start !== undefined || end !== undefined)) {
+				throw new ToolError('invalid', 'Give interval, or start and end, not both.');
+			}
+			if ((start === undefined) !== (end === undefined)) {
+				throw new ToolError('invalid', 'start and end go together. Give both, or neither.');
+			}
+			if (start !== undefined && end !== undefined && end <= start) {
+				throw new ToolError('invalid', 'end must be after start.');
+			}
+			// The vendor takes a fixed interval with its own fidelity, or a range with fidelity 1, and
+			// answers 400 for both together (OpenAPI price-history-schema.json, checked 2026-11-14).
+			const interval = String(input.interval ?? '1D') as keyof typeof HISTORY_FIDELITY;
+			const answer = asObject(
 				await client.request({
 					host: 'public',
 					method: 'GET',
 					path: '/v1/price-history',
-					query: {
-						symbol: input.slug as string,
-						fixedInterval: `INTERVAL_${interval}`,
-						fidelity: (input.fidelity as number | undefined) ?? 60,
-						'timestamp.startTimestamp': input.start as number | undefined,
-						'timestamp.endTimestamp': input.end as number | undefined,
-					},
+					query:
+						start !== undefined
+							? {
+									symbol: input.market_slug as string,
+									fidelity: 1,
+									'timestamp.startTimestamp': start,
+									'timestamp.endTimestamp': end,
+								}
+							: {
+									symbol: input.market_slug as string,
+									fixedInterval: `INTERVAL_${interval}`,
+									fidelity: HISTORY_FIDELITY[interval],
+								},
 				}),
 			);
+			if (isFull(input)) return answer;
+			const compact = compactHistory(answer);
+			return compact.points === 0
+				? {
+						...compact,
+						note: 'Polymarket US has no price history for this market_slug. Check it with get_market.',
+					}
+				: compact;
 		},
 	},
 	// ------------------------------------------------------------ read, with the key
 	{
 		name: 'get_balances',
 		title: 'Get balances',
-		description: 'The cash balance and buying power of the Polymarket US account.',
+		description: 'The cash balance and buying power of the account, as Polymarket US gives them.',
 		inputSchema: object({}),
 		readOnly: true,
 		money: false,
@@ -313,12 +386,12 @@ export const TOOLS: readonly ToolDef[] = [
 		name: 'get_positions',
 		title: 'Get positions',
 		description:
-			'The positions of the account, by market slug: net position, cost, value. Give market_slug for one market.',
-		inputSchema: object({ market_slug: MARKET_SLUG, limit: LIMIT, cursor: CURSOR }),
+			'The positions of the account: market slug, side, quantity, costBasisUsd (total cost of the position as Polymarket US counts it, trading fees included, not the price of one fill), avgPrice (costBasisUsd / quantity), realizedPnlUsd, unrealizedPnlUsd. Give market_slug for one market.',
+		inputSchema: object({ market_slug: MARKET_SLUG, limit: LIMIT, cursor: CURSOR, detail: DETAIL }),
 		readOnly: true,
 		money: false,
 		async run(input, { client }) {
-			return asObject(
+			const answer = asObject(
 				await client.request({
 					host: 'private',
 					method: 'GET',
@@ -330,17 +403,19 @@ export const TOOLS: readonly ToolDef[] = [
 					},
 				}),
 			);
+			return isFull(input) ? answer : compactPositions(answer);
 		},
 	},
 	{
 		name: 'get_activities',
 		title: 'Get activity',
-		description: 'The activity of the account: trades, resolutions, deposits, and withdrawals, newest first.',
-		inputSchema: object({ market_slug: MARKET_SLUG, limit: LIMIT, cursor: CURSOR }),
+		description:
+			'Trades, resolutions, deposits, and withdrawals of the account, newest first. A trade has price (the fill price) and costBasisUsd (the cost of that trade, trading fee included), so costBasisUsd / quantity can differ from price. Give market_slug for one market.',
+		inputSchema: object({ market_slug: MARKET_SLUG, limit: LIMIT, cursor: CURSOR, detail: DETAIL }),
 		readOnly: true,
 		money: false,
 		async run(input, { client }) {
-			return asObject(
+			const answer = asObject(
 				await client.request({
 					host: 'private',
 					method: 'GET',
@@ -352,17 +427,19 @@ export const TOOLS: readonly ToolDef[] = [
 					},
 				}),
 			);
+			return isFull(input) ? answer : compactActivities(answer);
 		},
 	},
 	{
 		name: 'get_open_orders',
 		title: 'Get open orders',
-		description: 'The open orders of the account. Give market_slug for one market.',
-		inputSchema: object({ market_slug: MARKET_SLUG }),
+		description:
+			'The open orders of the account: order ID, market slug, intent, price, quantity, filled and remaining. Give market_slug for one market.',
+		inputSchema: object({ market_slug: MARKET_SLUG, detail: DETAIL }),
 		readOnly: true,
 		money: false,
 		async run(input, { client }) {
-			return asObject(
+			const answer = asObject(
 				await client.request({
 					host: 'private',
 					method: 'GET',
@@ -370,12 +447,13 @@ export const TOOLS: readonly ToolDef[] = [
 					query: { slugs: input.market_slug ? [input.market_slug as string] : undefined },
 				}),
 			);
+			return isFull(input) ? answer : compactOpenOrders(answer);
 		},
 	},
 	{
 		name: 'get_order',
 		title: 'Get an order',
-		description: 'One order of the account by its order ID: its state, fills, and price.',
+		description: 'One order of the account by order_id: its state, fills, and price.',
 		inputSchema: object({ order_id: ORDER_ID }, ['order_id']),
 		readOnly: true,
 		money: false,
@@ -389,7 +467,7 @@ export const TOOLS: readonly ToolDef[] = [
 		name: 'preview_order',
 		title: 'Preview an order',
 		description:
-			'Check an order and see its expected cost and fills, with no order sent and no money moved. Use it before place_order.',
+			'Check an order in market_slug and see its expected cost and fills, with no order sent and no money moved. Use it before place_order.',
 		inputSchema: ORDER_SCHEMA,
 		readOnly: true,
 		money: false,
@@ -410,7 +488,7 @@ export const TOOLS: readonly ToolDef[] = [
 		name: 'place_order',
 		title: 'Place an order',
 		description:
-			'Place a live order on Polymarket US with real money. An order over the largest order setting of the account is refused and not sent. Use preview_order first.',
+			'Place a live order in market_slug with real money. An order over the largest order setting is refused and not sent. Use preview_order first.',
 		inputSchema: ORDER_SCHEMA,
 		readOnly: false,
 		money: true,
@@ -445,7 +523,7 @@ export const TOOLS: readonly ToolDef[] = [
 		name: 'modify_order',
 		title: 'Change an order',
 		description:
-			'Change the price, quantity, or time in force of an open order. With both a price and a quantity, the largest order check applies.',
+			'Change the price, quantity, or time in force of an open order (order_id, market_slug). With both a price and a quantity, the largest order check applies.',
 		inputSchema: object(
 			{
 				order_id: ORDER_ID,
@@ -497,7 +575,7 @@ export const TOOLS: readonly ToolDef[] = [
 	{
 		name: 'cancel_order',
 		title: 'Cancel an order',
-		description: 'Cancel one open order.',
+		description: 'Cancel one open order by order_id and market_slug.',
 		inputSchema: object({ order_id: ORDER_ID, market_slug: MARKET_SLUG }, ['order_id', 'market_slug']),
 		readOnly: false,
 		money: true,
@@ -514,7 +592,7 @@ export const TOOLS: readonly ToolDef[] = [
 	{
 		name: 'cancel_all_orders',
 		title: 'Cancel all orders',
-		description: 'Cancel every open order of the account, or every open order in one market.',
+		description: 'Cancel every open order of the account, or every open order in market_slug.',
 		inputSchema: object({ market_slug: MARKET_SLUG }),
 		readOnly: false,
 		money: true,
@@ -533,7 +611,7 @@ export const TOOLS: readonly ToolDef[] = [
 		name: 'close_position',
 		title: 'Close a position',
 		description:
-			'Close the whole position in one market at the market price, with real money. Refused when the estimated value is over the largest order setting.',
+			'Close the whole position in market_slug at the market price, with real money. Refused when the estimated value is over the largest order setting.',
 		inputSchema: object({ market_slug: MARKET_SLUG }, ['market_slug']),
 		readOnly: false,
 		money: true,

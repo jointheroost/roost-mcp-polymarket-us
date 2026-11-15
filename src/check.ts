@@ -1,7 +1,7 @@
 /**
  * A small check of tool input against the JSON Schema subset that this server's tools use:
  * an object with typed properties (string, number, integer, boolean, array of strings), enums,
- * minimum, required names, and no other names.
+ * minimum, required names (with a hint that says where to get a missing one), and no other names.
  */
 import { ToolError } from './errors.ts';
 
@@ -13,6 +13,8 @@ export interface PropertySchema {
 	maximum?: number;
 	items?: { type: 'string' };
 	maxLength?: number;
+	/** Said after "<name> is required." when the input lacks this name. Not sent to clients. */
+	hint?: string;
 }
 
 export interface ObjectSchema {
@@ -31,13 +33,17 @@ export function checkInput(schema: ObjectSchema, input: unknown): Record<string,
 	const record = value as Record<string, unknown>;
 	for (const name of schema.required ?? []) {
 		if (record[name] === undefined || record[name] === null || record[name] === '') {
-			throw new ToolError('invalid', `${name} is required.`);
+			const hint = schema.properties[name]?.hint;
+			throw new ToolError('invalid', `${name} is required.${hint ? ` ${hint}` : ''}`);
 		}
 	}
 	const out: Record<string, unknown> = {};
 	for (const [name, item] of Object.entries(record)) {
 		const property = schema.properties[name];
-		if (!property) throw new ToolError('invalid', `Unknown input "${name}".`);
+		if (!property) {
+			const takes = Object.keys(schema.properties).join(', ') || 'no inputs';
+			throw new ToolError('invalid', `Unknown input "${name}". This tool takes: ${takes}.`);
+		}
 		if (item === undefined || item === null) continue;
 		out[name] = checkProperty(name, property, item);
 	}
@@ -51,8 +57,14 @@ function checkProperty(name: string, property: PropertySchema, item: unknown): u
 			if (property.maxLength !== undefined && item.length > property.maxLength) {
 				throw new ToolError('invalid', `${name} is too long.`);
 			}
-			if (property.enum && !property.enum.includes(item.trim().toUpperCase())) {
-				throw new ToolError('invalid', `${name} must be one of ${property.enum.join(', ')}.`);
+			if (property.enum) {
+				// Any case is accepted; the tool gets the name as the schema spells it.
+				const wanted = item.trim().toUpperCase();
+				const member = property.enum.find((entry) => entry.toUpperCase() === wanted);
+				if (member === undefined) {
+					throw new ToolError('invalid', `${name} must be one of ${property.enum.join(', ')}.`);
+				}
+				return member;
 			}
 			return item.trim();
 		}

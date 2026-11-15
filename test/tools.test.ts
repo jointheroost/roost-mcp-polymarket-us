@@ -92,9 +92,9 @@ describe('with no key', () => {
 	test('the four public tools work and go to the gateway with no signature', async () => {
 		const { context, fake } = await setUp({ withKey: false });
 		await runTool('search_markets', { query: 'fed' }, context);
-		await runTool('get_market', { slug: MARKET_SLUG }, context);
-		await runTool('get_order_book', { slug: MARKET_SLUG }, context);
-		const history = await runTool('get_price_history', { slug: MARKET_SLUG }, context);
+		await runTool('get_market', { market_slug: MARKET_SLUG }, context);
+		await runTool('get_order_book', { market_slug: MARKET_SLUG }, context);
+		const history = await runTool('get_price_history', { market_slug: MARKET_SLUG }, context);
 		expect(history.history).toBeDefined();
 		expect(fake.requests.every((request) => request.host === 'gateway')).toBe(true);
 		expect(fake.requests.some((request) => request.headers['x-pm-signature'])).toBe(false);
@@ -115,7 +115,7 @@ describe('with the key', () => {
 		const balances = await runTool('get_balances', {}, context);
 		expect(balances.balances).toEqual([{ currentBalance: 125.5, currency: 'USD', buyingPower: 100.25 }]);
 		const positions = await runTool('get_positions', { market_slug: MARKET_SLUG }, context);
-		expect(Object.keys(positions.positions as object)).toEqual([MARKET_SLUG]);
+		expect((positions.positions as { marketSlug: string }[]).map((item) => item.marketSlug)).toEqual([MARKET_SLUG]);
 		await runTool('get_activities', { limit: 5 }, context);
 		await runTool('get_open_orders', { market_slug: MARKET_SLUG }, context);
 		const preview = await runTool('preview_order', order, context);

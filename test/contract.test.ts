@@ -101,10 +101,10 @@ test('each tool request fits the dated OpenAPI copy', async () => {
 	});
 	const order = { market_slug: MARKET_SLUG, intent: 'BUY_LONG', type: 'LIMIT', quantity: 2, price: '0.4' };
 	const inputs: Record<string, Json> = {
-		search_markets: { query: 'fed', limit: 5, page: 1 },
-		get_market: { slug: MARKET_SLUG },
-		get_order_book: { slug: MARKET_SLUG },
-		get_price_history: { slug: MARKET_SLUG, interval: '1W', fidelity: 30, start: 1, end: 2 },
+		search_markets: { query: 'fed', limit: 5, page: 1, markets_per_event: 2, detail: 'full' },
+		get_market: { market_slug: MARKET_SLUG },
+		get_order_book: { market_slug: MARKET_SLUG },
+		get_price_history: { market_slug: MARKET_SLUG, interval: '1W' },
 		get_balances: {},
 		get_positions: { market_slug: MARKET_SLUG, limit: 10, cursor: 'c1' },
 		get_activities: { market_slug: MARKET_SLUG, limit: 10, cursor: 'c1' },
@@ -119,7 +119,9 @@ test('each tool request fits the dated OpenAPI copy', async () => {
 	};
 	expect(Object.keys(inputs).sort()).toEqual(TOOLS.map((tool) => tool.name).sort());
 	for (const [name, input] of Object.entries(inputs)) await runTool(name, input, context);
+	// A custom range goes with no fixed interval; the vendor refuses both together.
+	await runTool('get_price_history', { market_slug: MARKET_SLUG, start: 1_794_700_000, end: 1_794_703_600 }, context);
 	const problems = fake.requests.flatMap(match);
 	expect(problems).toEqual([]);
-	expect(fake.requests.length).toBeGreaterThanOrEqual(15);
+	expect(fake.requests.length).toBeGreaterThanOrEqual(16);
 });

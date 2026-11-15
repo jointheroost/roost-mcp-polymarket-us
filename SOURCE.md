@@ -16,6 +16,15 @@ Every page was read on 2026-11-14, with no account and no key.
 | OpenAPI files (copies in `openapi/`): markets, orders, portfolio, price-history, search | https://docs.polymarket.us/llms.txt, "OpenAPI Specs" |
 | Changelog | https://docs.polymarket.us/changelog |
 
+Read on 2026-11-14 for 0.1.1, public gateway, no key, 14 calls (only field names and sizes were looked at):
+
+| Fact | Source |
+| --- | --- |
+| `GET /v1/price-history` needs `symbol` (the market slug) and `fidelity`. A fixed interval with a custom range gives HTTP 400. A range alone with `fidelity=1` works. An unknown symbol gives 200 and `{}`. Each fixed interval has a documented fidelity (1H and 6H: 1, 1D: 5, 1W, 1M and ALL: 180). | `openapi/price-history-schema.json` and the real gateway |
+| A search answer holds whole events: one event can hold 30 markets of about 2 KB each (3 events were 200 KB). The market has `marketSides` with `price` and `long`, and `outcomePrices` (deprecated, sometimes one price only). | the real gateway, `openapi/search-schema.json` |
+| A position's `cost` is "Total cost basis", `realized` is "Realized profit/loss", `cashValue` is "Unrealized PnL for the position". A trade has `price`, `costBasis`, `realizedPnl`. | `openapi/portfolio-schema.json` |
+| "Your cost for a position includes the trading fee you paid when you bought" | https://docs.polymarket.us/learn/faq/whole-contracts.md |
+
 One public, unsigned read of the real gateway on 2026-11-14: `GET /v1/search?query=fed&limit=1` answered 200 with one event ("Fed Funds Rate at the End of 2027?", 9 markets).
 
 ## Terms
